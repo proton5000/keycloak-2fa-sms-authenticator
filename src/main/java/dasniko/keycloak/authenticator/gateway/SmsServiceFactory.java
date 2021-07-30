@@ -1,4 +1,4 @@
-package keycloak.authenticator.gateway;
+package dasniko.keycloak.authenticator.gateway;
 
 import org.jboss.logging.Logger;
 
@@ -16,7 +16,7 @@ public class SmsServiceFactory {
 			return (phoneNumber, message) ->
 				LOG.warn(String.format("***** SIMULATION MODE ***** Would send SMS to %s with text: %s", phoneNumber, message));
 		} else {
-			return new CustomSmsService(config);
+			return new AwsSmsService(config);
 		}
 	}
 
