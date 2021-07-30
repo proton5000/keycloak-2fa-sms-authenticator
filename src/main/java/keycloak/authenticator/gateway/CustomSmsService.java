@@ -1,13 +1,16 @@
 package keycloak.authenticator.gateway;
 
-import keycloak.authenticator.dto.SendPhoneResponseDTO;
+import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.message.BasicNameValuePair;
+import org.apache.http.util.EntityUtils;
 import org.jboss.logging.Logger;
-import org.springframework.http.*;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
-import org.springframework.web.client.RestTemplate;
 
-import java.util.Map;
+import java.io.IOException;
+import java.util.*;
 
 /**
  * @author Niko Köbler, https://www.n-k.de, @dasniko
@@ -25,23 +28,23 @@ public class CustomSmsService implements SmsService {
 	}
 
 	@Override
-	public void send(String phoneNumber, String message) {
+	public void send(String phoneNumber, String message) throws IOException {
 		LOG.info(String.format("The phone number is: %s", phoneNumber));
 		sendOtp(phoneNumber);
 		LOG.info(String.format("The sms message is: %s", message));
 	}
 
-	private void sendOtp(String mobileNumber) {
-		HttpHeaders headers = new HttpHeaders();
-		headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+	private void sendOtp(String mobileNumber) throws IOException {
 
-		MultiValueMap<String, String> map = new LinkedMultiValueMap<>();
-		map.add("phone", mobileNumber);
+		HttpPost post = new HttpPost(SEND_OTP_URL);
+		post.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
-		HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(map, headers);
+		post.setEntity(new UrlEncodedFormEntity(Collections.singletonList(new BasicNameValuePair("phone", mobileNumber))));
 
-		LOG.info("Send otp code. Response: " + new RestTemplate()
-			.exchange(SEND_OTP_URL, HttpMethod.POST, entity, SendPhoneResponseDTO.class).getBody());
+		try (CloseableHttpClient httpClient = HttpClients.createDefault();
+			 CloseableHttpResponse response = httpClient.execute(post)) {
+
+			LOG.info("Send otp code. Response: " + EntityUtils.toString(response.getEntity()));
+		}
 	}
-
 }

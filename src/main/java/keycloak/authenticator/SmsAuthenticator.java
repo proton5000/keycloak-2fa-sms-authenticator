@@ -1,7 +1,15 @@
 package keycloak.authenticator;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import keycloak.authenticator.dto.ValidateCodeResponseDTO;
 import keycloak.authenticator.gateway.SmsServiceFactory;
+import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.message.BasicNameValuePair;
+import org.apache.http.util.EntityUtils;
 import org.jboss.logging.Logger;
 import org.keycloak.authentication.AuthenticationFlowContext;
 import org.keycloak.authentication.AuthenticationFlowError;
@@ -13,15 +21,10 @@ import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.theme.Theme;
-import org.springframework.http.*;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
-import org.springframework.web.client.RestTemplate;
 
 import javax.ws.rs.core.Response;
-import java.util.Locale;
-import java.util.Objects;
-import java.util.Random;
+import java.io.IOException;
+import java.util.*;
 
 /**
  * @author Niko Köbler, https://www.n-k.de, @dasniko
@@ -33,6 +36,8 @@ public class SmsAuthenticator implements Authenticator {
 	private static final String VALIDATE_OTP_URL = "https://oauth2.varus.ua/rest/otp/validate";
 
 	private static final Logger LOG = Logger.getLogger(SmsAuthenticator.class);
+
+	ObjectMapper objectMapper = new ObjectMapper();
 
 	@Override
 	public void authenticate(AuthenticationFlowContext context) {
@@ -102,13 +107,21 @@ public class SmsAuthenticator implements Authenticator {
 		if (Boolean.parseBoolean(context.getAuthenticatorConfig().getConfig().getOrDefault("simulation", "false"))) {
 			isValid = enteredCode.equals(authSession.getAuthNote("simulationCode"));
 		} else {
-			ResponseEntity<ValidateCodeResponseDTO> response = validateOtp(authSession.getAuthNote("phone"), enteredCode);
-			if (!response.getStatusCode().equals(HttpStatus.OK)) {
+
+			ValidateCodeResponseDTO response = null;
+			try {
+				response = validateOtp(authSession.getAuthNote("phone"), enteredCode);
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+
+			if (Objects.isNull(response)) {
 				context.failureChallenge(AuthenticationFlowError.INTERNAL_ERROR,
 					context.form().createErrorPage(Response.Status.INTERNAL_SERVER_ERROR));
 				return;
+			} else {
+				isValid = response.getResult();
 			}
-			isValid = (Objects.nonNull(response.getBody())) ? response.getBody().getResult() : false;
 		}
 
 		if (isValid) {
@@ -151,22 +164,28 @@ public class SmsAuthenticator implements Authenticator {
 	public void close() {
 	}
 
-	private ResponseEntity<ValidateCodeResponseDTO> validateOtp(String phone, String enteredCode) {
-		HttpHeaders headers = new HttpHeaders();
-		headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+	private ValidateCodeResponseDTO validateOtp(String phone, String enteredCode) throws IOException {
 
-		MultiValueMap<String, String> map = new LinkedMultiValueMap<>();
-		map.add("phone", phone);
-		map.add("otp", enteredCode);
+		HttpPost post = new HttpPost(VALIDATE_OTP_URL);
+		post.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
-		HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(map, headers);
+		post.setEntity(new UrlEncodedFormEntity(Arrays.asList(new BasicNameValuePair("phone", phone),
+			new BasicNameValuePair("otp", enteredCode))));
 
-		ResponseEntity<ValidateCodeResponseDTO> response =
-			new RestTemplate().exchange(VALIDATE_OTP_URL, HttpMethod.POST, entity, ValidateCodeResponseDTO.class);
+		try (CloseableHttpClient httpClient = HttpClients.createDefault();
+			 CloseableHttpResponse response = httpClient.execute(post)) {
 
-		LOG.info("Validate otp code. Response:" + response.getBody());
+			ValidateCodeResponseDTO validateCodeResponseDTO = null;
 
-		return response;
+			if (response.getStatusLine().getStatusCode() == 200) {
+				validateCodeResponseDTO = objectMapper.readValue(EntityUtils.toString(response.getEntity()), ValidateCodeResponseDTO.class);
+				LOG.info("Validate otp code. Response: " + validateCodeResponseDTO);
+			} else {
+				LOG.info("Validate otp code. Response status:" + response.getStatusLine());
+			}
+
+			return validateCodeResponseDTO;
+		}
 	}
 
 }
